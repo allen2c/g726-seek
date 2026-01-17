@@ -1,3 +1,5 @@
+from typing import Literal, TypeAlias
+
 # Defines bit depth to subtype mapping table
 # Key: Bits per sample
 # Value: libsndfile subtype string
@@ -7,3 +9,5 @@ SUBTYPE_MAP = {
     4: "G726_32",  # 4 bits (16k sr -> 64kbps)
     5: "G726_40",  # 5 bits (16k sr -> 80kbps)
 }
+
+BITS_TYPE: TypeAlias = Literal[2, 3, 4, 5]

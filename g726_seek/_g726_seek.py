@@ -1,8 +1,12 @@
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import soundfile as sf
+
+if TYPE_CHECKING:
+    from g726_seek.subtypes import BITS_TYPE
 
 
 class G726Seek:
@@ -68,3 +72,85 @@ class G726Seek:
         sf.write(file_path, data, sample_rate, format="WAV", subtype=subtype)
 
         return Path(file_path)
+
+    @classmethod
+    def convert(
+        cls,
+        data: np.ndarray,
+        output_path: Path | str,
+        src_sr: int,
+        target_sr: int = 16000,
+        bits: "BITS_TYPE" = 2,
+        to_mono: bool = True,
+    ) -> Path:
+        """
+        Converts numpy array to G.726 WAV format.
+
+        Args:
+            data (np.array): Audio data
+            src_sr (int): Source sample rate (required for resampling)
+            output_path (Path | str): Output file path
+            target_sr (int): Target sample rate (default 16000)
+            bits (BITS_TYPE): Compression depth (2, 3, 4, 5)
+            to_mono (bool): Whether to force conversion to mono
+        """
+        import librosa
+
+        from g726_seek.ensure_mono import ensure_mono
+        from g726_seek.subtypes import SUBTYPE_MAP
+
+        # 1. Handle channels (Mono Mixing)
+        if to_mono:
+            data = ensure_mono(data, style="librosa")
+
+        # 2. Handle resampling (if source sr != target sr)
+        if src_sr != target_sr:
+            # Use librosa's resample function
+            # Note: This step is CPU intensive
+            data = librosa.resample(data, orig_sr=src_sr, target_sr=target_sr)
+
+        # 3. Write file
+        subtype = SUBTYPE_MAP[bits]
+        sf.write(output_path, data, target_sr, format="WAV", subtype=subtype)
+
+        return Path(output_path)
+
+    @classmethod
+    def convert_from_file(
+        cls,
+        input_path: Path | str,
+        output_path: Path | str,
+        *,
+        target_sr: int = 16000,
+        bits: "BITS_TYPE" = 2,
+        to_mono: bool = True,
+    ):
+        """
+        Converts any audio file (MP3, WAV, FLAC...) to G.726 WAV format.
+
+        Args:
+            input_path (str): Source file path
+            output_path (str): Output file path
+            target_sr (int): Target sample rate (default 16000)
+            bits (int): Compression depth (2=32kbps, 3=48kbps...)
+            to_mono (bool): Whether to force conversion to mono
+        """
+        import librosa
+
+        from g726_seek.subtypes import SUBTYPE_MAP
+
+        if not os.path.exists(input_path):
+            raise FileNotFoundError(f"File not found: {input_path}")
+
+        # 1. Load with librosa
+        try:
+            # y is audio data (float32), sr is actual sample rate read
+            y, _ = librosa.load(input_path, sr=target_sr, mono=to_mono)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load or resample: {e}")
+
+        # 2. Write to G.726
+        subtype = SUBTYPE_MAP[bits]
+        sf.write(output_path, y, target_sr, format="WAV", subtype=subtype)
+
+        return output_path
