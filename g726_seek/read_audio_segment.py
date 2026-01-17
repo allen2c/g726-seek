@@ -1,8 +1,12 @@
+from pathlib import Path
+
 import numpy as np
 import soundfile as sf
 
 
-def read_audio_segment(file_path, start_sec, duration_sec):
+def read_audio_segment(
+    file_path: Path | str, start_sec: float, duration_sec: float
+) -> np.ndarray:
     """
     General reader: supports PCM WAV, G.726 WAV (32k/48k/64k...), FLAC, etc.
     If the soundfile library recognizes the header, it can seek accurately.
@@ -28,5 +32,4 @@ def read_audio_segment(file_path, start_sec, duration_sec):
             return data
 
     except Exception as e:
-        print(f"Read error: {e}")
-        return None
+        raise ValueError(f"Read error: {e}")
