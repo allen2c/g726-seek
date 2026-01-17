@@ -1,12 +1,13 @@
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Literal, TypeAlias
 
 import numpy as np
 import soundfile as sf
 
-if TYPE_CHECKING:
-    from g726_seek.subtypes import BITS_TYPE
+BITS_TYPE: TypeAlias = Literal[2, 3, 4, 5]
+
+SUBTYPE_CACHE: dict[BITS_TYPE, str] = {}
 
 
 class G726Seek:
@@ -44,7 +45,7 @@ class G726Seek:
         data: np.ndarray,
         *,
         sample_rate: int = 16000,
-        bits_per_sample: int = 2,
+        bits_per_sample: BITS_TYPE = 2,
     ) -> Path:
         """
         Writes numpy array to G.726 format.
@@ -57,14 +58,13 @@ class G726Seek:
                                    2 bits @ 16k = 32kbps (recommended)
                                    3 bits @ 16k = 48kbps
         """
-        from g726_seek.subtypes import SUBTYPE_MAP
 
         # 1. Check if compression depth is valid
-        subtype = SUBTYPE_MAP.get(bits_per_sample)
+        subtype = G726Seek.resolve_best_subtype(bits_per_sample)
         if not subtype:
             raise ValueError(
                 f"Unsupported bits_per_sample: {bits_per_sample}. "
-                + f"Please choose one of: {list(SUBTYPE_MAP.keys())}"
+                + f"Please choose one of: {list(SUBTYPE_CACHE.keys())}"
             )
 
         # 2. Write file
@@ -97,7 +97,6 @@ class G726Seek:
         import librosa
 
         from g726_seek.ensure_mono import ensure_mono
-        from g726_seek.subtypes import SUBTYPE_MAP
 
         # 1. Handle channels (Mono Mixing)
         if to_mono:
@@ -110,7 +109,7 @@ class G726Seek:
             data = librosa.resample(data, orig_sr=src_sr, target_sr=target_sr)
 
         # 3. Write file
-        subtype = SUBTYPE_MAP[bits]
+        subtype = G726Seek.resolve_best_subtype(bits)
         sf.write(output_path, data, target_sr, format="WAV", subtype=subtype)
 
         return Path(output_path)
@@ -137,8 +136,6 @@ class G726Seek:
         """
         import librosa
 
-        from g726_seek.subtypes import SUBTYPE_MAP
-
         if not os.path.exists(input_path):
             raise FileNotFoundError(f"File not found: {input_path}")
 
@@ -150,7 +147,54 @@ class G726Seek:
             raise RuntimeError(f"Failed to load or resample: {e}")
 
         # 2. Write to G.726
-        subtype = SUBTYPE_MAP[bits]
+        subtype = G726Seek.resolve_best_subtype(bits)
         sf.write(output_path, y, target_sr, format="WAV", subtype=subtype)
 
         return output_path
+
+    @staticmethod
+    def resolve_best_subtype(bits: BITS_TYPE) -> str:
+        """
+        動態尋找當前作業系統支援的最佳 Subtype。
+        優先級：標準 G726 -> NMS 變體 -> G721 (僅4bit) -> IMA ADPCM (保底)
+        """
+        if bits in SUBTYPE_CACHE:
+            return SUBTYPE_CACHE[bits]
+
+        # 取得當前系統支援的所有 WAV Subtypes
+        available = sf.available_subtypes("WAV")
+
+        # 定義優先順序候選名單 (Priority List)
+        candidates = []
+        if bits == 2:
+            # 32kbps @ 16k
+            candidates = ["G726_16", "NMS_ADPCM_16"]
+        elif bits == 3:
+            # 48kbps @ 16k
+            candidates = ["G726_24", "NMS_ADPCM_24"]
+        elif bits == 4:
+            # 64kbps @ 16k
+            candidates = ["G726_32", "G721_32", "NMS_ADPCM_32", "IMA_ADPCM"]
+        elif bits == 5:
+            # 80kbps @ 16k
+            candidates = ["G726_40", "NMS_ADPCM_40"]
+
+        # 遍歷候選名單，選出系統支援的第一個
+        selected = None
+        for c in candidates:
+            if c in available:
+                selected = c
+                break
+
+        # 特殊處理：如果 2-bit/3-bit 都不支援，是否要 fallback 到 4-bit IMA_ADPCM?
+        # 為了保證 write 不會 crash，我們做最後的保底
+        if selected is None:
+            if "IMA_ADPCM" in available:
+                print(f"警告: 系統不支援 {bits}-bit G.726，降級使用 4-bit IMA_ADPCM。")
+                selected = "IMA_ADPCM"
+            else:
+                # 幾乎不可能發生，除非 libsndfile 壞了
+                raise RuntimeError("嚴重錯誤: 您的系統不支援任何 ADPCM 壓縮格式。")
+
+        SUBTYPE_CACHE[bits] = selected
+        return selected
